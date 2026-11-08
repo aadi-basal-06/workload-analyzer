@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment files & secrets
+.env
+*.env
+backend/.env
+!.env.example
+!backend/.env.example
+
+# Build outputs
+dist/
+frontend/dist/
+
+# Test coverage & logs
+coverage/
+*.log
+npm-debug.log*
+
+# OS artifacts
+.DS_Store
+**/.DS_Store
