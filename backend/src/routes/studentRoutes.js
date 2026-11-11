@@ -214,9 +214,9 @@ router.post(
 );
 
 /**
- * GET /api/student/workload
+ * GET /api/student/workload & GET /api/student/workload/current (alias)
  */
-router.get('/workload', async (req, res, next) => {
+const handleGetWorkload = async (req, res, next) => {
   try {
     const { start_date, end_date } = req.query;
     const workload = await studentService.getWorkloadAnalysis(
@@ -228,6 +228,30 @@ router.get('/workload', async (req, res, next) => {
       success: true,
       data: workload,
       message: 'Workload analysis calculated'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+router.get('/workload', handleGetWorkload);
+router.get('/workload/current', handleGetWorkload);
+
+/**
+ * POST /api/student/workload/calculate
+ */
+router.post('/workload/calculate', async (req, res, next) => {
+  try {
+    const { start_date, end_date } = req.body || {};
+    const workload = await studentService.getWorkloadAnalysis(
+      req.user.student_id,
+      start_date,
+      end_date
+    );
+    res.status(200).json({
+      success: true,
+      data: workload,
+      message: 'Workload analysis recalculated'
     });
   } catch (error) {
     next(error);

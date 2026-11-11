@@ -47,7 +47,8 @@ Standard Error Structure:
 | `GET` | `/api/student/tasks` | List assigned coursework with progress & overdue status |
 | `PATCH` | `/api/student/tasks/:id/progress`| Update actual hours spent & completion percentage |
 | `POST` | `/api/student/tasks/:id/submit` | Mark task as completed with final actual hours |
-| `GET` | `/api/student/workload` | Runs `sp_calculate_workload` and returns 5 pressures |
+| `GET` | `/api/student/workload` *(alias: `/api/student/workload/current`)* | Runs `sp_calculate_workload` and returns 5 pressures & history |
+| `POST` | `/api/student/workload/calculate` | Recalculate student workload analysis |
 | `GET` | `/api/student/collisions` | Runs `sp_detect_collisions` and returns collisions |
 | `PATCH` | `/api/student/collisions/:id/resolve` | Mark collision alert as resolved |
 

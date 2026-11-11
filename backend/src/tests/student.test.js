@@ -110,6 +110,28 @@ describe('Student Flow API Tests', () => {
     expect(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).toContain(analysis.risk_level);
   });
 
+  test('GET /api/student/workload/current - Retrieves current workload for student', async () => {
+    const res = await request(app)
+      .get('/api/student/workload/current')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.latest).toBeDefined();
+    expect(res.body.data.history).toBeDefined();
+  });
+
+  test('POST /api/student/workload/calculate - Recalculates student workload', async () => {
+    const res = await request(app)
+      .post('/api/student/workload/calculate')
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.latest).toBeDefined();
+  });
+
   test('GET /api/student/collisions - Retrieves detected collision events', async () => {
     const res = await request(app)
       .get('/api/student/collisions')
