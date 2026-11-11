@@ -47,3 +47,4 @@ function formatMySqlDateTime(dateInput) {
 module.exports = {
   formatMySqlDateTime
 };
+
