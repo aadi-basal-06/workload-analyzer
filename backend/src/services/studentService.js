@@ -3,6 +3,7 @@
 // =====================================================================
 
 const pool = require('../config/db');
+const { formatMySqlDateTime } = require('../utils/dateUtils');
 
 /**
  * Get student profile information
@@ -77,13 +78,16 @@ async function createAvailability(studentId, { start_datetime, end_datetime, ava
   }
 
   // Reject overlapping slots for this student
+  const formattedStart = formatMySqlDateTime(start_datetime);
+  const formattedEnd = formatMySqlDateTime(end_datetime);
+
   const [overlaps] = await pool.query(
     `SELECT availability_id 
      FROM AVAILABILITY 
      WHERE student_id = ? 
        AND start_datetime < ? 
        AND end_datetime > ?`,
-    [studentId, end_datetime, start_datetime]
+    [studentId, formattedEnd, formattedStart]
   );
 
   if (overlaps.length > 0) {
@@ -102,7 +106,7 @@ async function createAvailability(studentId, { start_datetime, end_datetime, ava
   const [result] = await pool.query(
     `INSERT INTO AVAILABILITY (student_id, start_datetime, end_datetime, available_hours, availability_type)
      VALUES (?, ?, ?, ?, ?)`,
-    [studentId, start_datetime, end_datetime, hours, availability_type || 'study_block']
+    [studentId, formattedStart, formattedEnd, hours, availability_type || 'study_block']
   );
 
   // Synchronize workload calculation and collisions
@@ -131,8 +135,8 @@ async function updateAvailability(studentId, availabilityId, { start_datetime, e
     throw err;
   }
 
-  const startStr = start_datetime || existing[0].start_datetime;
-  const endStr = end_datetime || existing[0].end_datetime;
+  const startStr = formatMySqlDateTime(start_datetime || existing[0].start_datetime);
+  const endStr = formatMySqlDateTime(end_datetime || existing[0].end_datetime);
   const start = new Date(startStr);
   const end = new Date(endStr);
 
@@ -308,10 +312,13 @@ async function submitTask(studentId, studentTaskId, { actual_hours }) {
  * Calculate workload and return latest analysis
  */
 async function getWorkloadAnalysis(studentId, startDate, endDate) {
+  const formattedStart = startDate ? formatMySqlDateTime(startDate) : null;
+  const formattedEnd = endDate ? formatMySqlDateTime(endDate) : null;
+
   // Execute stored procedure
   await pool.query(
     'CALL sp_calculate_workload(?, ?, ?)',
-    [studentId, startDate || null, endDate || null]
+    [studentId, formattedStart, formattedEnd]
   );
 
   // Fetch latest row from WORKLOAD_ANALYSIS

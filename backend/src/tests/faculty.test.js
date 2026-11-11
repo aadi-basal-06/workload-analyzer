@@ -128,6 +128,22 @@ describe('Faculty Flow & Deadline Simulation API Tests', () => {
     expect(res.body.data.recommendation).toBeDefined();
   });
 
+  test('POST /api/faculty/simulator/run - Accepts full ISO 8601 string with timezone (e.g. 2026-12-09T02:23:00.000Z)', async () => {
+    const isoString = new Date(Date.now() + 28 * 24 * 3600 * 1000).toISOString();
+
+    const res = await request(app)
+      .post('/api/faculty/simulator/run')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        task_id: createdTaskId,
+        proposed_deadline: isoString
+      });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.simulation_id).toBeDefined();
+  });
+
   test('GET /api/faculty/simulator/history (alias) - Retrieves history via alias', async () => {
     const res = await request(app)
       .get('/api/faculty/simulator/history')

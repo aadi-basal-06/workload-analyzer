@@ -3,6 +3,7 @@
 // =====================================================================
 
 const pool = require('../config/db');
+const { formatMySqlDateTime } = require('../utils/dateUtils');
 
 /**
  * Fetch courses taught by the faculty
@@ -127,8 +128,9 @@ async function createTask(facultyId, {
   await getCourseById(facultyId, course_id);
 
   // Validate dates
-  const relDt = release_datetime || new Date().toISOString().slice(0, 19).replace('T', ' ');
-  if (new Date(deadline_datetime) <= new Date(relDt)) {
+  const relDt = formatMySqlDateTime(release_datetime) || formatMySqlDateTime(new Date());
+  const deadlineDt = formatMySqlDateTime(deadline_datetime);
+  if (new Date(deadlineDt) <= new Date(relDt)) {
     const err = new Error('Deadline datetime must be strictly after release datetime');
     err.statusCode = 400;
     throw err;
@@ -147,7 +149,7 @@ async function createTask(facultyId, {
       description || '',
       task_type || 'assignment',
       relDt,
-      deadline_datetime,
+      deadlineDt,
       estimated_hours || 5.0,
       difficulty_level || 3,
       cognitive_load || 5,
@@ -225,6 +227,9 @@ async function updateTask(facultyId, taskId, fields) {
     status
   } = fields;
 
+  const formattedRelease = release_datetime !== undefined ? formatMySqlDateTime(release_datetime) : null;
+  const formattedDeadline = deadline_datetime !== undefined ? formatMySqlDateTime(deadline_datetime) : null;
+
   await pool.query(
     `UPDATE TASKS 
      SET title = COALESCE(?, title),
@@ -243,8 +248,8 @@ async function updateTask(facultyId, taskId, fields) {
       title,
       description,
       task_type,
-      release_datetime,
-      deadline_datetime,
+      formattedRelease,
+      formattedDeadline,
       estimated_hours,
       difficulty_level,
       cognitive_load,
@@ -350,10 +355,13 @@ async function runSimulation(facultyId, { task_id, proposed_deadline }) {
   // Verify task exists and belongs to this faculty member (reuses existing ownership lookup)
   await getTaskById(facultyId, task_id);
 
+  // Normalize proposed_deadline to MySQL DATETIME format (YYYY-MM-DD HH:MM:SS)
+  const formattedDeadline = formatMySqlDateTime(proposed_deadline);
+
   // Call simulation stored procedure
   await pool.query(
     'CALL sp_simulate_deadline_change(?, ?, ?)',
-    [task_id, proposed_deadline, facultyId]
+    [task_id, formattedDeadline, facultyId]
   );
 
   // Retrieve the most recently created simulation

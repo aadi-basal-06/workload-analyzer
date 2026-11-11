@@ -15,6 +15,18 @@ export default function SimulatorPage() {
   const [simulating, setSimulating] = useState(false);
   const [error, setError] = useState(null);
 
+  // Format date to local YYYY-MM-DDTHH:mm for datetime-local input
+  const formatToLocalDateTimeInput = (dateInput) => {
+    const d = new Date(dateInput);
+    const pad = (n) => String(n).padStart(2, '0');
+    const year = d.getFullYear();
+    const month = pad(d.getMonth() + 1);
+    const day = pad(d.getDate());
+    const hours = pad(d.getHours());
+    const minutes = pad(d.getMinutes());
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
+
   useEffect(() => {
     const fetchTasks = async () => {
       try {
@@ -26,7 +38,7 @@ export default function SimulatorPage() {
           setSelectedTask(data[0].task_id);
           const currentDue = new Date(data[0].deadline_datetime);
           currentDue.setDate(currentDue.getDate() + 3);
-          setProposedDeadline(currentDue.toISOString().slice(0, 16));
+          setProposedDeadline(formatToLocalDateTimeInput(currentDue));
         }
       } catch (err) {
         setError(err.message || 'Failed to load task inventory');
@@ -44,7 +56,7 @@ export default function SimulatorPage() {
     if (t) {
       const currentDue = new Date(t.deadline_datetime);
       currentDue.setDate(currentDue.getDate() + 3);
-      setProposedDeadline(currentDue.toISOString().slice(0, 16));
+      setProposedDeadline(formatToLocalDateTimeInput(currentDue));
     }
   };
 
@@ -58,9 +70,10 @@ export default function SimulatorPage() {
     try {
       setSimulating(true);
       setError(null);
+      const cleanDeadline = proposedDeadline.replace('T', ' ') + (proposedDeadline.length === 16 ? ':00' : '');
       const res = await api.post('/faculty/simulator/run', {
         task_id: Number(selectedTask),
-        proposed_deadline: new Date(proposedDeadline).toISOString()
+        proposed_deadline: cleanDeadline
       });
       setSimResult(res);
     } catch (err) {
