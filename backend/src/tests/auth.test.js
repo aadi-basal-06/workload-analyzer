@@ -5,11 +5,13 @@
 const request = require('supertest');
 const app = require('../app');
 const pool = require('../config/db');
+const { disconnectRedis } = require('../config/redis');
 
 describe('Auth API Integration Tests', () => {
   afterAll(async () => {
     // Clean up test user if created
     await pool.query("DELETE FROM USERS WHERE email = 'test_student_unique@test.com'");
+    await disconnectRedis();
     await pool.end();
   });
 

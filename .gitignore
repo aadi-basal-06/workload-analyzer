@@ -17,6 +17,8 @@ frontend/dist/
 coverage/
 *.log
 npm-debug.log*
+*.rdb
+dump.rdb
 
 # OS artifacts
 .DS_Store

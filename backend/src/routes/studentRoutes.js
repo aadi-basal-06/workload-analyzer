@@ -136,6 +136,36 @@ router.delete(
 );
 
 /**
+ * GET /api/student/deadlines/priority
+ * Retrieves priority deadlines from Redis Sorted Set with MySQL enrichment and fallback
+ */
+router.get(
+  '/deadlines/priority',
+  [
+    query('withinDays').optional().isInt({ min: 1 }).withMessage('withinDays must be a positive integer'),
+    query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('limit must be between 1 and 100'),
+    handleValidationErrors
+  ],
+  async (req, res, next) => {
+    try {
+      const withinDays = req.query.withinDays ? parseInt(req.query.withinDays, 10) : null;
+      const limit = req.query.limit ? parseInt(req.query.limit, 10) : 10;
+      const result = await studentService.getStudentDeadlinesPriority(req.user.student_id, {
+        withinDays,
+        limit
+      });
+      res.status(200).json({
+        success: true,
+        data: result,
+        message: 'Priority deadlines retrieved successfully'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
  * GET /api/student/tasks
  */
 router.get('/tasks', async (req, res, next) => {

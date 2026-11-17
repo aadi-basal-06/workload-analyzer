@@ -3,6 +3,7 @@
 // =====================================================================
 
 const app = require('./app');
+const { disconnectRedis } = require('./config/redis');
 
 const PORT = process.env.PORT || 5001;
 
@@ -15,10 +16,15 @@ const server = app.listen(PORT, () => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
+async function gracefulShutdown(signal) {
+  console.log(`${signal} signal received: closing HTTP server and connections`);
+  server.close(async () => {
     console.log('HTTP server closed');
+    await disconnectRedis();
+    process.exit(0);
   });
-});
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 

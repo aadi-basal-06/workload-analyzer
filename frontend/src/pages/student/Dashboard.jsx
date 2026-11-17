@@ -13,8 +13,26 @@ export default function StudentDashboard() {
   const [workload, setWorkload] = useState(null);
   const [collisions, setCollisions] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [priorityDeadlines, setPriorityDeadlines] = useState([]);
+  const [priorityFilter, setPriorityFilter] = useState('all'); // 'all', '1', '2', '7'
+  const [prioritySource, setPrioritySource] = useState('redis');
+  const [priorityLoading, setPriorityLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const fetchPriorityDeadlines = async (filterKey = 'all') => {
+    try {
+      setPriorityLoading(true);
+      const query = filterKey === 'all' ? '' : `?withinDays=${filterKey}`;
+      const res = await api.get(`/student/deadlines/priority${query}`);
+      setPriorityDeadlines(res?.tasks || []);
+      setPrioritySource(res?.source || 'redis');
+    } catch (err) {
+      console.warn('Failed to load priority deadlines:', err);
+    } finally {
+      setPriorityLoading(false);
+    }
+  };
 
   const fetchDashboardData = async () => {
     try {
@@ -30,6 +48,7 @@ export default function StudentDashboard() {
       setWorkload(workloadRes?.latest || null);
       setCollisions(collisionsRes || []);
       setTasks(tasksRes || []);
+      await fetchPriorityDeadlines(priorityFilter);
     } catch (err) {
       setError(err.message || 'Failed to load dashboard data');
     } finally {
@@ -40,6 +59,11 @@ export default function StudentDashboard() {
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  const handleFilterChange = (filterKey) => {
+    setPriorityFilter(filterKey);
+    fetchPriorityDeadlines(filterKey);
+  };
 
   const handleResolveCollision = async (collisionId) => {
     try {
@@ -160,52 +184,152 @@ export default function StudentDashboard() {
 
       {/* Main Grid: Impending Deadlines & Workload Radar */}
       <div className="grid-cols-2" style={{ marginBottom: '24px' }}>
-        {/* Impending Deadlines Card */}
+        {/* Smart Deadline Priority Card (Redis Powered) */}
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ fontSize: '17px', fontWeight: 600 }}>Impending Deadlines</h3>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h3 style={{ fontSize: '17px', fontWeight: 600 }}>Smart Deadline Priority</h3>
+              <span
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  padding: '2px 8px',
+                  borderRadius: 'var(--radius-pill)',
+                  backgroundColor: prioritySource === 'redis' ? 'rgba(52, 199, 89, 0.14)' : 'rgba(0, 102, 204, 0.1)',
+                  color: prioritySource === 'redis' ? 'var(--status-low-text)' : 'var(--primary)',
+                  border: '1px solid var(--hairline)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+                title="Priority ordering is powered by Redis Sorted Sets (O(log N + M)), enriched with MySQL academic records"
+              >
+                <span>⚡</span> {prioritySource === 'redis' ? 'Redis Sorted Set' : 'MySQL Live'}
+              </span>
+            </div>
             <Link to="/student/tasks" style={{ fontSize: '13px', fontWeight: 500 }}>
               All Tasks →
             </Link>
           </div>
 
-          {upcomingDeadlines.length === 0 ? (
+          {/* Time Filter Pills */}
+          <div style={{ display: 'flex', gap: '6px', marginBottom: '14px', flexWrap: 'wrap' }}>
+            {[
+              { key: 'all', label: 'All' },
+              { key: '1', label: '24 Hours' },
+              { key: '2', label: '48 Hours' },
+              { key: '7', label: '7 Days' }
+            ].map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => handleFilterChange(f.key)}
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  padding: '4px 12px',
+                  borderRadius: 'var(--radius-pill)',
+                  border: priorityFilter === f.key ? '1px solid var(--primary)' : '1px solid var(--hairline)',
+                  backgroundColor: priorityFilter === f.key ? 'var(--primary)' : 'var(--canvas-parchment)',
+                  color: priorityFilter === f.key ? '#ffffff' : 'var(--ink-secondary)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {priorityLoading ? (
+            <div style={{ padding: '24px', textAlign: 'center', color: 'var(--ink-secondary)', fontSize: '13px' }}>
+              Updating priority queue...
+            </div>
+          ) : priorityDeadlines.length === 0 ? (
             <div className="empty-state" style={{ padding: '32px 16px' }}>
-              <p>No upcoming task deadlines. Your academic queue is balanced!</p>
+              <p>No task deadlines due within this time horizon. Your academic queue is balanced!</p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {upcomingDeadlines.map((t) => (
+              {priorityDeadlines.slice(0, 5).map((t, idx) => (
                 <div
-                  key={t.student_task_id}
+                  key={t.student_task_id || t.task_id}
                   style={{
                     padding: '14px 16px',
                     backgroundColor: 'var(--canvas-parchment)',
                     borderRadius: 'var(--radius-md)',
-                    border: '1px solid var(--hairline)'
+                    border: '1px solid var(--hairline)',
+                    position: 'relative'
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
-                    <div>
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--primary)' }}>
-                        {t.course_code}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                      <span
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          backgroundColor: 'var(--surface)',
+                          color: 'var(--ink-secondary)',
+                          padding: '2px 6px',
+                          borderRadius: 'var(--radius-xs)',
+                          border: '1px solid var(--hairline)',
+                          marginTop: '2px'
+                        }}
+                      >
+                        #{t.priority_rank || idx + 1}
                       </span>
-                      <h4 style={{ fontSize: '14px', fontWeight: 600, marginTop: '2px' }}>
-                        {t.task_title}
-                      </h4>
+                      <div>
+                        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--primary)' }}>
+                          {t.course_code}
+                        </span>
+                        <h4 style={{ fontSize: '14px', fontWeight: 600, marginTop: '2px' }}>
+                          {t.task_title}
+                        </h4>
+                      </div>
                     </div>
-                    {t.is_overdue ? (
-                      <span className="severity-pill HIGH">OVERDUE</span>
-                    ) : (
-                      <span style={{ fontSize: '11px', fontWeight: 500, color: 'var(--ink-secondary)', backgroundColor: 'var(--surface)', padding: '2px 8px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--hairline)' }}>
-                        In {t.hours_until_deadline}h
-                      </span>
-                    )}
+
+                    <div>
+                      {t.urgency_status === 'OVERDUE' || t.is_overdue ? (
+                        <span className="severity-pill HIGH">OVERDUE</span>
+                      ) : t.urgency_status === 'DUE_TODAY' ? (
+                        <span className="severity-pill MEDIUM">DUE TODAY</span>
+                      ) : t.urgency_status === 'DUE_SOON' ? (
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            padding: '2px 8px',
+                            borderRadius: 'var(--radius-pill)',
+                            backgroundColor: '#fff8e1',
+                            color: '#b78103',
+                            border: '1px solid #ffe082'
+                          }}
+                        >
+                          DUE SOON
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 500,
+                            color: 'var(--ink-secondary)',
+                            backgroundColor: 'var(--surface)',
+                            padding: '2px 8px',
+                            borderRadius: 'var(--radius-pill)',
+                            border: '1px solid var(--hairline)'
+                          }}
+                        >
+                          In {t.hours_until_deadline}h
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: 'var(--ink-secondary)', marginTop: '8px' }}>
-                    <span>Due: {new Date(t.deadline_datetime).toLocaleDateString()}</span>
-                    <span>{t.estimated_hours}h estimated</span>
+                    <span>
+                      Due: {new Date(t.deadline_datetime).toLocaleDateString()} ({t.is_overdue ? `Overdue by ${Math.abs(t.hours_until_deadline)}h` : `${t.hours_until_deadline}h remaining`})
+                    </span>
+                    <span>{t.estimated_hours}h effort • {t.assessment_weight}% wt</span>
                   </div>
 
                   <div className="progress-bar-container">

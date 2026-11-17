@@ -13,6 +13,7 @@ const authRoutes = require('./routes/authRoutes');
 const studentRoutes = require('./routes/studentRoutes');
 const facultyRoutes = require('./routes/facultyRoutes');
 const errorHandler = require('./middleware/errorHandler');
+const { isRedisAvailable } = require('./config/redis');
 
 const app = express();
 
@@ -48,7 +49,8 @@ app.get('/api/health', (req, res) => {
     data: {
       status: 'UP',
       timestamp: new Date().toISOString(),
-      service: 'Student Workload & Deadline Collision Analyzer API'
+      service: 'Student Workload & Deadline Collision Analyzer API',
+      redis: isRedisAvailable() ? 'connected' : 'fallback_mode'
     },
     message: 'System operational'
   });

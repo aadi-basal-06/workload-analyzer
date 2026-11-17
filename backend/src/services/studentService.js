@@ -4,6 +4,8 @@
 
 const pool = require('../config/db');
 const { formatMySqlDateTime } = require('../utils/dateUtils');
+const workloadCacheService = require('./workloadCacheService');
+const deadlineQueueService = require('./deadlineQueueService');
 
 /**
  * Get student profile information
@@ -113,6 +115,9 @@ async function createAvailability(studentId, { start_datetime, end_datetime, ava
   await pool.query('CALL sp_calculate_workload(?, NOW(), DATE_ADD(NOW(), INTERVAL 14 DAY))', [studentId]);
   await pool.query('CALL sp_detect_collisions(?)', [studentId]);
 
+  // Invalidate Redis workload cache
+  await workloadCacheService.invalidateStudentWorkloadCache(studentId);
+
   const [created] = await pool.query(
     'SELECT * FROM AVAILABILITY WHERE availability_id = ?',
     [result.insertId]
@@ -183,6 +188,9 @@ async function updateAvailability(studentId, availabilityId, { start_datetime, e
   await pool.query('CALL sp_calculate_workload(?, NOW(), DATE_ADD(NOW(), INTERVAL 14 DAY))', [studentId]);
   await pool.query('CALL sp_detect_collisions(?)', [studentId]);
 
+  // Invalidate Redis workload cache
+  await workloadCacheService.invalidateStudentWorkloadCache(studentId);
+
   const [updated] = await pool.query('SELECT * FROM AVAILABILITY WHERE availability_id = ?', [availabilityId]);
   return updated[0];
 }
@@ -206,6 +214,9 @@ async function deleteAvailability(studentId, availabilityId) {
   // Sync workload analysis
   await pool.query('CALL sp_calculate_workload(?, NOW(), DATE_ADD(NOW(), INTERVAL 14 DAY))', [studentId]);
   await pool.query('CALL sp_detect_collisions(?)', [studentId]);
+
+  // Invalidate Redis workload cache
+  await workloadCacheService.invalidateStudentWorkloadCache(studentId);
 
   return { message: 'Availability slot deleted successfully' };
 }
@@ -264,6 +275,12 @@ async function updateTaskProgress(studentId, studentTaskId, { actual_hours, comp
   await pool.query('CALL sp_calculate_workload(?, NOW(), DATE_ADD(NOW(), INTERVAL 14 DAY))', [studentId]);
   await pool.query('CALL sp_detect_collisions(?)', [studentId]);
 
+  // Synchronize with Redis
+  if (newStatus === 'completed' || Number(newCompletion) >= 100) {
+    await deadlineQueueService.removeTaskFromStudentQueue(studentId, existing[0].task_id);
+  }
+  await workloadCacheService.invalidateStudentWorkloadCache(studentId);
+
   const [updated] = await pool.query(
     'SELECT * FROM v_student_task_overview WHERE student_task_id = ?',
     [studentTaskId]
@@ -301,6 +318,10 @@ async function submitTask(studentId, studentTaskId, { actual_hours }) {
   await pool.query('CALL sp_calculate_workload(?, NOW(), DATE_ADD(NOW(), INTERVAL 14 DAY))', [studentId]);
   await pool.query('CALL sp_detect_collisions(?)', [studentId]);
 
+  // Synchronize with Redis
+  await deadlineQueueService.removeTaskFromStudentQueue(studentId, existing[0].task_id);
+  await workloadCacheService.invalidateStudentWorkloadCache(studentId);
+
   const [updated] = await pool.query(
     'SELECT * FROM v_student_task_overview WHERE student_task_id = ?',
     [studentTaskId]
@@ -309,9 +330,21 @@ async function submitTask(studentId, studentTaskId, { actual_hours }) {
 }
 
 /**
- * Calculate workload and return latest analysis
+ * Calculate workload and return latest analysis (with Redis cache support)
  */
 async function getWorkloadAnalysis(studentId, startDate, endDate) {
+  const windowKey = (startDate && endDate) ? `${startDate}_${endDate}` : '14d';
+
+  // 1. Check Redis cache first
+  const cached = await workloadCacheService.getCachedWorkload(studentId, windowKey);
+  if (cached) {
+    return {
+      ...cached,
+      source: 'redis'
+    };
+  }
+
+  // 2. Fallback / Cache Miss: Compute via MySQL stored procedure
   const formattedStart = startDate ? formatMySqlDateTime(startDate) : null;
   const formattedEnd = endDate ? formatMySqlDateTime(endDate) : null;
 
@@ -330,7 +363,7 @@ async function getWorkloadAnalysis(studentId, startDate, endDate) {
     [studentId]
   );
 
-  // Also fetch past 5 analyses for trend graph
+  // Also fetch past 7 analyses for trend graph
   const [history] = await pool.query(
     `SELECT analysis_id, total_estimated_hours, available_hours, 
             temporal_pressure, workload_pressure, cognitive_pressure, 
@@ -343,9 +376,17 @@ async function getWorkloadAnalysis(studentId, startDate, endDate) {
     [studentId]
   );
 
-  return {
+  const result = {
     latest: rows.length > 0 ? rows[0] : null,
     history: history.reverse()
+  };
+
+  // 3. Cache result in Redis for subsequent requests
+  await workloadCacheService.setCachedWorkload(studentId, windowKey, result);
+
+  return {
+    ...result,
+    source: 'mysql'
   };
 }
 
@@ -402,6 +443,7 @@ module.exports = {
   submitTask,
   getWorkloadAnalysis,
   getCollisions,
-  resolveCollision
+  resolveCollision,
+  getStudentDeadlinesPriority: (studentId, options) => deadlineQueueService.getStudentDeadlinesPriority(studentId, options)
 };
 

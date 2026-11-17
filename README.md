@@ -10,6 +10,7 @@ A production-grade, full-stack DBMS course project that proactively identifies s
 graph TD
     subgraph Frontend["React (Vite) + Recharts Frontend (Port 5173)"]
         UI_Dash[Student & Faculty Dashboards]
+        UI_Priority[Smart Deadline Priority Component]
         UI_Radar[5-Pressure Radar Chart]
         UI_Sim[Interactive Deadline Simulator]
         UI_Avail[Study Availability Scheduler]
@@ -19,22 +20,32 @@ graph TD
         AuthMid[JWT Auth & RBAC Guards]
         ValMid[express-validator]
         ServL[Service Layer: studentService / facultyService]
+        RedisServ[Redis Cache & Priority Queue Service]
         ErrMid[Centralized MySQL Error Handler]
     end
 
-    subgraph Database["MySQL Database: student_workload (Port 3306)"]
-        Tables[(10 3NF Relational Tables)]
+    subgraph RedisDB["Redis NoSQL Database (Port 6379)"]
+        ZSetQueue["Sorted Sets (ZSET): deadlines:student:<id> (Score: Epoch ms)"]
+        WorkloadCache["Cache Keys: workload:student:<id>:v<version>:<window> (TTL: 300s)"]
+        VersionCounter["Version Keys: workload:student:<id>:version"]
+    end
+
+    subgraph MySQLDB["MySQL Database: student_workload (Port 3306)"]
+        Tables[(10 3NF Relational Tables - Permanent Truth)]
         Triggers[Integrity Triggers: Cycles / Dates / Sync]
         Procedures[Stored Procedures: sp_calculate_workload, sp_detect_collisions, sp_simulate_deadline_change]
         Views[Views: v_student_task_overview, v_course_risk_summary, v_high_risk_students]
     end
 
     UI_Dash -->|REST / JWT| AuthMid
+    UI_Priority -->|GET /api/student/deadlines/priority| AuthMid
     UI_Radar -->|REST / JWT| AuthMid
     UI_Sim -->|REST / JWT| AuthMid
     UI_Avail -->|REST / JWT| AuthMid
 
     AuthMid --> ValMid --> ServL --> ErrMid
+    ServL <-->|Sub-ms Priority Queue & Cached Analysis| RedisServ
+    RedisServ <-->|node-redis client| RedisDB
     ServL -->|mysql2 Promise Pool| Tables
     ServL -->|CALL| Procedures
     ServL -->|SELECT| Views
@@ -45,20 +56,29 @@ graph TD
 
 ## Technology Stack
 
-- **Database**: MySQL 8.0+ / 9.x+ (Local server, Database: `student_workload`, root user with empty password)
-- **Backend**: Node.js (v20+), Express 4.x, `mysql2` (Promise Connection Pool), `bcrypt`, `jsonwebtoken`, `cors`, `express-validator`
-- **Frontend**: React 18, Vite, React Router v6, Recharts (Radar, Area, Bar charts), Modern Custom CSS Design System
-- **Testing**: Jest + Supertest integration test suite
+- **Primary Relational Database**: MySQL 8.0+ / 9.x+ (Database: `student_workload`, root user with empty password) — Authoritative Source of Truth
+- **Secondary NoSQL Database**: Redis 7+ (Local or Docker on Port 6379) — High-Performance Priority Queues & Workload Caching
+- **Backend**: Node.js (v20+), Express 4.x, `mysql2` (Promise Connection Pool), `redis` (v6.3+), `bcrypt`, `jsonwebtoken`, `cors`, `express-validator`
+- **Frontend**: React 18, Vite, React Router v6, Recharts (Radar, Area, Bar charts), Apple-Inspired Custom CSS Design System
+- **Testing**: Jest + Supertest integration test suite (31 automated tests)
 
 ---
 
 ## Quick Start (Step-by-Step)
 
 ### 1. Prerequisites
-- MySQL local server running on `localhost:3306` (accessible via `mysql -u root` without password)
-- Node.js (v18+) and npm installed
+- **MySQL Local Server** running on `localhost:3306` (accessible via `mysql -u root` without password)
+- **Redis Server** running on `localhost:6379`. You can start a local Redis server or run a Docker container:
+  ```bash
+  # Option A: Run Redis 7 via Docker
+  docker run --name workload-redis -p 6379:6379 -d redis:7-alpine
 
-### 2. One-Command Database Provisioning
+  # Option B: Run native Redis (macOS Homebrew)
+  redis-server --daemonize yes
+  ```
+- **Node.js** (v18+) and npm installed
+
+### 2. One-Command Database Provisioning & Redis Index Rebuild
 Run the automated idempotency shell script from the project root:
 ```bash
 ./setup_db.sh
@@ -70,6 +90,11 @@ This runs:
 4. `db/logic/003_triggers.sql` (Installs integrity and sync triggers)
 5. `db/seed/seed.sql` (Seeds 2 faculty, 8 students, 4 courses, 12 tasks, and realistic relative dates)
 
+Optionally re-index or verify Redis Sorted Sets from MySQL records at any time:
+```bash
+node backend/src/scripts/rebuildRedisIndexes.js
+```
+
 ### 3. Run Backend Server
 ```bash
 cd backend
@@ -77,7 +102,7 @@ npm install
 npm run dev
 ```
 Backend API will start at: `http://localhost:5001`
-Health check: `http://localhost:5001/api/health`
+Health check: `http://localhost:5001/api/health` (reports both MySQL and Redis connectivity)
 
 ### 4. Run Backend Integration Tests
 In a separate terminal:
@@ -85,7 +110,7 @@ In a separate terminal:
 cd backend
 npm test
 ```
-All 19 Supertest tests covering Auth, Student workflow, Faculty workflow, and the Simulation engine will execute.
+All 31 Supertest tests covering Auth, Student workflow, Faculty workflow, What-If Simulation, and Redis NoSQL Caching/Priority Queues will execute.
 
 ### 5. Run Frontend Development Server
 ```bash
@@ -94,6 +119,44 @@ npm install
 npm run dev
 ```
 Frontend will be available at: `http://localhost:5173`
+
+---
+
+## Dual-Database Architecture: MySQL & Redis Integration
+
+This project implements a hybrid **Relational + NoSQL** architecture with strict separation of concerns and non-blocking resilience:
+
+| Dimension | Primary: MySQL 8.0+ | Secondary: Redis 7.0+ |
+|---|---|---|
+| **Role** | Source of Truth & Permanent Academic Ledger | In-Memory Priority Queue & Analysis Cache |
+| **Data Model** | 10 Relational 3NF Tables | Sorted Sets (`ZSET`), Strings (`KV`), Version Counters |
+| **Guarantees** | ACID Transactions, Foreign Keys, Triggers | Sub-millisecond $O(\log N + M)$ Range Queries, TTLs |
+| **Resilience** | Mandatory Core Ledger | Graceful Fallback (Backend defaults to MySQL if Redis is offline) |
+
+### 1. Feature A: Student Workload Analysis Caching
+- **Cache Key Hierarchy**: `workload-analyzer:v1:workload:student:<student_id>:v<version>:<window>`
+- **TTL**: 300 seconds (configurable via `REDIS_WORKLOAD_CACHE_TTL`).
+- **Cache Invalidation Mechanism**: Uses a per-student version counter (`workload-analyzer:v1:workload:student:<student_id>:version`). When availability, task submissions, or progress change, `INCR` is executed on the version counter. Subsequent workload requests immediately yield a cache miss and calculate fresh data from MySQL without requiring expensive or dangerous `KEYS` scans in production.
+
+### 2. Feature B: Sorted Set Deadline Priority Queue
+- **Sorted Set Key**: `workload-analyzer:v1:deadlines:student:<student_id>`
+- **Score**: Millisecond timestamp epoch (`new Date(deadline_datetime).getTime()`).
+- **Member**: Unique task ID (`task_id`).
+- **Endpoint**: `GET /api/student/deadlines/priority?withinDays=N&limit=K`
+- **Hybrid Enrichment Workflow**:
+  1. Redis executes `zRangeWithScores` from `-inf` (including overdue deadlines) up to `Date.now() + withinDays * 86400000`.
+  2. The sorted IDs are enriched from MySQL with course codes, task titles, weights, and estimated effort.
+  3. Automatic urgency classification: `OVERDUE`, `DUE_TODAY`, `DUE_SOON`, and `UPCOMING`.
+  4. Completed tasks are automatically pruned from the sorted set via `ZREM`.
+
+### 3. Feature C: Automatic Synchronization & Failure Transparency
+- **Synchronized Mutations**:
+  - Faculty task creation: Adds task ID to assigned cohort deadline queues and invalidates student workload caches.
+  - Faculty task update: Updates deadline score in sorted sets and invalidates caches.
+  - Faculty task deletion: Prunes task from student queues (`ZREM`) and invalidates caches.
+  - Student progress / submission: Prunes completed tasks from priority queue and invalidates cache.
+  - Student availability: Updates study hours and invalidates cache.
+- **Fault Tolerance**: All Redis operations are wrapped in safe execution boundaries (`safeRedisOp`). If the Redis server stops or experiences network partitioning, all queries silently fallback to MySQL without interrupting students or faculty.
 
 ---
 

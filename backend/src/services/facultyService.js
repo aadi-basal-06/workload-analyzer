@@ -4,6 +4,8 @@
 
 const pool = require('../config/db');
 const { formatMySqlDateTime } = require('../utils/dateUtils');
+const workloadCacheService = require('./workloadCacheService');
+const deadlineQueueService = require('./deadlineQueueService');
 
 /**
  * Fetch courses taught by the faculty
@@ -78,7 +80,34 @@ async function updateCourse(facultyId, courseId, { course_code, course_name, cre
  */
 async function deleteCourse(facultyId, courseId) {
   await getCourseById(facultyId, courseId);
+
+  let affected = [];
+  try {
+    const [rows] = await pool.query(
+      `SELECT DISTINCT st.student_id, t.task_id 
+       FROM TASKS t 
+       JOIN STUDENT_TASKS st ON t.task_id = st.task_id 
+       WHERE t.course_id = ?`,
+      [courseId]
+    );
+    affected = rows;
+  } catch (err) {}
+
   await pool.query('DELETE FROM COURSES WHERE course_id = ? AND faculty_id = ?', [courseId, facultyId]);
+
+  // Synchronize Redis: clean deadline queues and invalidate student caches
+  try {
+    const studentIds = [...new Set(affected.map((r) => r.student_id))];
+    for (const r of affected) {
+      await deadlineQueueService.removeTaskFromStudentQueue(r.student_id, r.task_id);
+    }
+    if (studentIds.length > 0) {
+      await workloadCacheService.invalidateStudentsWorkloadCache(studentIds);
+    }
+  } catch (syncErr) {
+    console.warn(`[Redis Sync] Course deletion sync warning: ${syncErr.message}`);
+  }
+
   return { message: 'Course and associated tasks deleted successfully' };
 }
 
@@ -162,6 +191,21 @@ async function createTask(facultyId, {
 
   // Auto-assign to semester students via stored procedure
   await pool.query('CALL sp_assign_task_to_students(?)', [taskId]);
+
+  // Synchronize Redis deadline queue & invalidate cached student workloads
+  try {
+    const [assigned] = await pool.query(
+      'SELECT DISTINCT student_id FROM STUDENT_TASKS WHERE task_id = ?',
+      [taskId]
+    );
+    const studentIds = assigned.map((a) => a.student_id);
+    if (studentIds.length > 0) {
+      await deadlineQueueService.addTasksToStudentsQueue(studentIds, taskId, deadlineDt);
+      await workloadCacheService.invalidateStudentsWorkloadCache(studentIds);
+    }
+  } catch (syncErr) {
+    console.warn(`[Redis Sync] Task creation sync warning: ${syncErr.message}`);
+  }
 
   const [created] = await pool.query(
     `SELECT t.*, c.course_code, c.course_name 
@@ -260,6 +304,23 @@ async function updateTask(facultyId, taskId, fields) {
     ]
   );
 
+  // Synchronize Redis: update deadlines in student queues and invalidate caches
+  try {
+    const [assigned] = await pool.query(
+      'SELECT DISTINCT student_id FROM STUDENT_TASKS WHERE task_id = ?',
+      [taskId]
+    );
+    const studentIds = assigned.map((a) => a.student_id);
+    if (studentIds.length > 0) {
+      if (formattedDeadline) {
+        await deadlineQueueService.updateTaskDeadlineInQueues(studentIds, taskId, formattedDeadline);
+      }
+      await workloadCacheService.invalidateStudentsWorkloadCache(studentIds);
+    }
+  } catch (syncErr) {
+    console.warn(`[Redis Sync] Task update sync warning: ${syncErr.message}`);
+  }
+
   return getTaskById(facultyId, taskId);
 }
 
@@ -268,7 +329,28 @@ async function updateTask(facultyId, taskId, fields) {
  */
 async function deleteTask(facultyId, taskId) {
   await getTaskById(facultyId, taskId);
+
+  let studentIds = [];
+  try {
+    const [assigned] = await pool.query(
+      'SELECT DISTINCT student_id FROM STUDENT_TASKS WHERE task_id = ?',
+      [taskId]
+    );
+    studentIds = assigned.map((a) => a.student_id);
+  } catch (err) {}
+
   await pool.query('DELETE FROM TASKS WHERE task_id = ?', [taskId]);
+
+  // Synchronize Redis: remove task from student queues and invalidate workload caches
+  try {
+    await deadlineQueueService.removeTaskFromAllQueues(taskId, studentIds);
+    if (studentIds.length > 0) {
+      await workloadCacheService.invalidateStudentsWorkloadCache(studentIds);
+    }
+  } catch (syncErr) {
+    console.warn(`[Redis Sync] Task deletion sync warning: ${syncErr.message}`);
+  }
+
   return { message: 'Task deleted successfully' };
 }
 
@@ -298,6 +380,18 @@ async function addDependency(facultyId, taskId, { prerequisite_task_id, dependen
     [taskId, prerequisite_task_id, dependency_type || 'hard_prerequisite']
   );
 
+  // Invalidate assigned students' workload cache (dependency changes affect dependency_pressure)
+  try {
+    const [assigned] = await pool.query(
+      'SELECT DISTINCT student_id FROM STUDENT_TASKS WHERE task_id = ?',
+      [taskId]
+    );
+    const studentIds = assigned.map((a) => a.student_id);
+    if (studentIds.length > 0) {
+      await workloadCacheService.invalidateStudentsWorkloadCache(studentIds);
+    }
+  } catch (syncErr) {}
+
   return {
     dependency_id: result.insertId,
     task_id: taskId,
@@ -316,6 +410,18 @@ async function deleteDependency(facultyId, taskId, prerequisiteTaskId) {
     'DELETE FROM TASK_DEPENDENCIES WHERE task_id = ? AND prerequisite_task_id = ?',
     [taskId, prerequisiteTaskId]
   );
+
+  // Invalidate assigned students' workload cache
+  try {
+    const [assigned] = await pool.query(
+      'SELECT DISTINCT student_id FROM STUDENT_TASKS WHERE task_id = ?',
+      [taskId]
+    );
+    const studentIds = assigned.map((a) => a.student_id);
+    if (studentIds.length > 0) {
+      await workloadCacheService.invalidateStudentsWorkloadCache(studentIds);
+    }
+  } catch (syncErr) {}
 
   return { message: 'Dependency removed successfully' };
 }

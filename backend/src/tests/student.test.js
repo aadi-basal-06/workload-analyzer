@@ -5,6 +5,7 @@
 const request = require('supertest');
 const app = require('../app');
 const pool = require('../config/db');
+const { disconnectRedis } = require('../config/redis');
 
 describe('Student Flow API Tests', () => {
   let token;
@@ -30,6 +31,7 @@ describe('Student Flow API Tests', () => {
     if (createdSlotId) {
       await pool.query('DELETE FROM AVAILABILITY WHERE availability_id = ?', [createdSlotId]);
     }
+    await disconnectRedis();
     await pool.end();
   });
 

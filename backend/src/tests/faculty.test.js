@@ -5,6 +5,7 @@
 const request = require('supertest');
 const app = require('../app');
 const pool = require('../config/db');
+const { disconnectRedis } = require('../config/redis');
 
 describe('Faculty Flow & Deadline Simulation API Tests', () => {
   let token;
@@ -27,6 +28,7 @@ describe('Faculty Flow & Deadline Simulation API Tests', () => {
     if (createdTaskId) {
       await pool.query('DELETE FROM TASKS WHERE task_id = ?', [createdTaskId]);
     }
+    await disconnectRedis();
     await pool.end();
   });
 
