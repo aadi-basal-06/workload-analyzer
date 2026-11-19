@@ -2,19 +2,16 @@
 -- 001_views.sql: Database Views for Student Workload & Collision Analyzer
 -- =====================================================================
 
-USE student_workload;
-
--- Drop existing views if they exist
-DROP VIEW IF EXISTS v_student_task_overview;
-DROP VIEW IF EXISTS v_high_risk_students;
-DROP VIEW IF EXISTS v_course_risk_summary;
+DROP VIEW IF EXISTS v_student_task_overview CASCADE;
+DROP VIEW IF EXISTS v_high_risk_students CASCADE;
+DROP VIEW IF EXISTS v_course_risk_summary CASCADE;
 
 -- ---------------------------------------------------------------------
 -- 1. v_student_task_overview:
 -- Detailed flat view joining students, enrolled courses, assigned tasks,
 -- and submission progress. Computes overdue status dynamically.
 -- ---------------------------------------------------------------------
-CREATE VIEW v_student_task_overview AS
+CREATE OR REPLACE VIEW v_student_task_overview AS
 SELECT 
     st.student_task_id,
     s.student_id,
@@ -48,10 +45,10 @@ SELECT
     st.submitted_at,
     st.score,
     CASE 
-        WHEN t.deadline_datetime < NOW() AND (st.completion_percentage < 100 OR st.status != 'completed') THEN 1 
+        WHEN t.deadline_datetime < CURRENT_TIMESTAMP AND (st.completion_percentage < 100 OR st.status != 'completed') THEN 1 
         ELSE 0 
     END AS is_overdue,
-    TIMESTAMPDIFF(HOUR, NOW(), t.deadline_datetime) AS hours_until_deadline
+    ROUND(EXTRACT(EPOCH FROM (t.deadline_datetime - CURRENT_TIMESTAMP)) / 3600)::INT AS hours_until_deadline
 FROM STUDENT_TASKS st
 JOIN STUDENTS s ON st.student_id = s.student_id
 JOIN USERS u ON s.user_id = u.user_id
@@ -64,7 +61,7 @@ LEFT JOIN USERS fu ON c.faculty_id = fu.user_id;
 -- Aggregates course metrics, enrolled students (matching semester),
 -- average task completion, and average student risk score.
 -- ---------------------------------------------------------------------
-CREATE VIEW v_course_risk_summary AS
+CREATE OR REPLACE VIEW v_course_risk_summary AS
 SELECT 
     c.course_id,
     c.course_code,
@@ -84,7 +81,6 @@ LEFT JOIN TASKS t ON c.course_id = t.course_id
 LEFT JOIN STUDENTS s ON s.semester = c.semester
 LEFT JOIN STUDENT_TASKS st ON st.task_id = t.task_id AND st.student_id = s.student_id
 LEFT JOIN (
-    -- Subquery to fetch only the latest workload analysis per student
     SELECT wa1.*
     FROM WORKLOAD_ANALYSIS wa1
     INNER JOIN (
@@ -107,7 +103,7 @@ GROUP BY
 -- Lists students whose latest workload analysis indicates HIGH or CRITICAL risk,
 -- including counts of unresolved collisions and pending tasks.
 -- ---------------------------------------------------------------------
-CREATE VIEW v_high_risk_students AS
+CREATE OR REPLACE VIEW v_high_risk_students AS
 SELECT 
     s.student_id,
     s.user_id,
@@ -140,7 +136,7 @@ SELECT
         JOIN TASKS t2 ON st2.task_id = t2.task_id
         WHERE st2.student_id = s.student_id 
           AND st2.status != 'completed' 
-          AND t2.deadline_datetime >= NOW()
+          AND t2.deadline_datetime >= CURRENT_TIMESTAMP
     ) AS pending_tasks_count
 FROM STUDENTS s
 JOIN USERS u ON s.user_id = u.user_id
@@ -151,4 +147,3 @@ JOIN WORKLOAD_ANALYSIS wa ON wa.analysis_id = (
     WHERE student_id = s.student_id
 )
 WHERE wa.overall_risk_score >= 55.00 OR wa.risk_level IN ('HIGH', 'CRITICAL');
-

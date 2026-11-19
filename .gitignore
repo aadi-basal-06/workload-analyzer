@@ -24,4 +24,5 @@ dump.rdb
 .DS_Store
 **/.DS_Store
 
-**/.DS_Store
+# Local report drafts
+/DBMS_MINI_PROJECT_REPORT.txt

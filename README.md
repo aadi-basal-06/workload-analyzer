@@ -30,7 +30,7 @@ graph TD
         VersionCounter["Version Keys: workload:student:<id>:version"]
     end
 
-    subgraph MySQLDB["MySQL Database: student_workload (Port 3306)"]
+    subgraph PostgresDB["PostgreSQL Database: student_workload (Port 5432)"]
         Tables[(10 3NF Relational Tables - Permanent Truth)]
         Triggers[Integrity Triggers: Cycles / Dates / Sync]
         Procedures[Stored Procedures: sp_calculate_workload, sp_detect_collisions, sp_simulate_deadline_change]
@@ -46,7 +46,7 @@ graph TD
     AuthMid --> ValMid --> ServL --> ErrMid
     ServL <-->|Sub-ms Priority Queue & Cached Analysis| RedisServ
     RedisServ <-->|node-redis client| RedisDB
-    ServL -->|mysql2 Promise Pool| Tables
+    ServL -->|pg Connection Pool| Tables
     ServL -->|CALL| Procedures
     ServL -->|SELECT| Views
     Tables -->|BEFORE / AFTER| Triggers
@@ -56,9 +56,9 @@ graph TD
 
 ## Technology Stack
 
-- **Primary Relational Database**: MySQL 8.0+ / 9.x+ (Database: `student_workload`, root user with empty password) — Authoritative Source of Truth
+- **Primary Relational Database**: PostgreSQL 15+ (Database: `student_workload`, default user: `postgres`, Port: `5432`) — Authoritative Source of Truth
 - **Secondary NoSQL Database**: Redis 7+ (Local or Docker on Port 6379) — High-Performance Priority Queues & Workload Caching
-- **Backend**: Node.js (v20+), Express 4.x, `mysql2` (Promise Connection Pool), `redis` (v6.3+), `bcrypt`, `jsonwebtoken`, `cors`, `express-validator`
+- **Backend**: Node.js (v20+), Express 4.x, `pg` (node-postgres connection pool), `redis` (v6.3+), `bcrypt`, `jsonwebtoken`, `cors`, `express-validator`
 - **Frontend**: React 18, Vite, React Router v6, Recharts (Radar, Area, Bar charts), Apple-Inspired Custom CSS Design System
 - **Testing**: Jest + Supertest integration test suite (31 automated tests)
 
@@ -67,7 +67,7 @@ graph TD
 ## Quick Start (Step-by-Step)
 
 ### 1. Prerequisites
-- **MySQL Local Server** running on `localhost:3306` (accessible via `mysql -u root` without password)
+- **PostgreSQL 15+ Server** running on `localhost:5432` (database: `student_workload`, user: `postgres`)
 - **Redis Server** running on `localhost:6379`. You can start a local Redis server or run a Docker container:
   ```bash
   # Option A: Run Redis 7 via Docker
@@ -122,21 +122,21 @@ Frontend will be available at: `http://localhost:5173`
 
 ---
 
-## Dual-Database Architecture: MySQL & Redis Integration
+## Dual-Database Architecture: PostgreSQL & Redis Integration
 
 This project implements a hybrid **Relational + NoSQL** architecture with strict separation of concerns and non-blocking resilience:
 
-| Dimension | Primary: MySQL 8.0+ | Secondary: Redis 7.0+ |
+| Dimension | Primary: PostgreSQL 15+ | Secondary: Redis 7.0+ |
 |---|---|---|
 | **Role** | Source of Truth & Permanent Academic Ledger | In-Memory Priority Queue & Analysis Cache |
 | **Data Model** | 10 Relational 3NF Tables | Sorted Sets (`ZSET`), Strings (`KV`), Version Counters |
 | **Guarantees** | ACID Transactions, Foreign Keys, Triggers | Sub-millisecond $O(\log N + M)$ Range Queries, TTLs |
-| **Resilience** | Mandatory Core Ledger | Graceful Fallback (Backend defaults to MySQL if Redis is offline) |
+| **Resilience** | Mandatory Core Ledger | Graceful Fallback (Backend defaults to PostgreSQL if Redis is offline) |
 
 ### 1. Feature A: Student Workload Analysis Caching
 - **Cache Key Hierarchy**: `workload-analyzer:v1:workload:student:<student_id>:v<version>:<window>`
 - **TTL**: 300 seconds (configurable via `REDIS_WORKLOAD_CACHE_TTL`).
-- **Cache Invalidation Mechanism**: Uses a per-student version counter (`workload-analyzer:v1:workload:student:<student_id>:version`). When availability, task submissions, or progress change, `INCR` is executed on the version counter. Subsequent workload requests immediately yield a cache miss and calculate fresh data from MySQL without requiring expensive or dangerous `KEYS` scans in production.
+- **Cache Invalidation Mechanism**: Uses a per-student version counter (`workload-analyzer:v1:workload:student:<student_id>:version`). When availability, task submissions, or progress change, `INCR` is executed on the version counter. Subsequent workload requests immediately yield a cache miss and calculate fresh data from PostgreSQL without requiring expensive or dangerous `KEYS` scans in production.
 
 ### 2. Feature B: Sorted Set Deadline Priority Queue
 - **Sorted Set Key**: `workload-analyzer:v1:deadlines:student:<student_id>`
@@ -145,7 +145,7 @@ This project implements a hybrid **Relational + NoSQL** architecture with strict
 - **Endpoint**: `GET /api/student/deadlines/priority?withinDays=N&limit=K`
 - **Hybrid Enrichment Workflow**:
   1. Redis executes `zRangeWithScores` from `-inf` (including overdue deadlines) up to `Date.now() + withinDays * 86400000`.
-  2. The sorted IDs are enriched from MySQL with course codes, task titles, weights, and estimated effort.
+  2. The sorted IDs are enriched from PostgreSQL with course codes, task titles, weights, and estimated effort.
   3. Automatic urgency classification: `OVERDUE`, `DUE_TODAY`, `DUE_SOON`, and `UPCOMING`.
   4. Completed tasks are automatically pruned from the sorted set via `ZREM`.
 
@@ -156,7 +156,7 @@ This project implements a hybrid **Relational + NoSQL** architecture with strict
   - Faculty task deletion: Prunes task from student queues (`ZREM`) and invalidates caches.
   - Student progress / submission: Prunes completed tasks from priority queue and invalidates cache.
   - Student availability: Updates study hours and invalidates cache.
-- **Fault Tolerance**: All Redis operations are wrapped in safe execution boundaries (`safeRedisOp`). If the Redis server stops or experiences network partitioning, all queries silently fallback to MySQL without interrupting students or faculty.
+- **Fault Tolerance**: All Redis operations are wrapped in safe execution boundaries (`safeRedisOp`). If the Redis server stops or experiences network partitioning, all queries silently fallback to PostgreSQL without interrupting students or faculty.
 
 ---
 

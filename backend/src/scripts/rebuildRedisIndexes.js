@@ -25,7 +25,7 @@ async function rebuild() {
   try {
     // 2. Fetch all active students
     const [students] = await pool.query('SELECT student_id, roll_no FROM STUDENTS ORDER BY student_id ASC');
-    console.log(`[Rebuild] Found ${students.length} students registered in MySQL.`);
+    console.log(`[Rebuild] Found ${students.length} students registered in PostgreSQL.`);
 
     // 3. Fetch all incomplete active student tasks
     const [tasks] = await pool.query(`
@@ -92,7 +92,7 @@ async function rebuild() {
     // 5. Clean teardown
     await disconnectRedis();
     await pool.end();
-    console.log('[Rebuild] Closed MySQL pool and Redis connections cleanly.');
+    console.log('[Rebuild] Closed PostgreSQL pool and Redis connections cleanly.');
   }
 }
 
